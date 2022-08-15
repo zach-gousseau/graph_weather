@@ -2,7 +2,7 @@
 import torch
 from huggingface_hub import PyTorchModelHubMixin
 
-from graph_weather.models import Decoder, Encoder, Processor
+from . import Decoder, Encoder, Processor
 
 
 class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
@@ -11,7 +11,10 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(
         self,
         lat_lons: list,
-        resolution: int = 2,
+        graph_nodes: list,
+        lat_lons_to_graph_map: dict, 
+        distances: dict, 
+        # resolution: int = 2,
         feature_dim: int = 78,
         aux_dim: int = 24,
         node_dim: int = 256,
@@ -48,8 +51,11 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         """
         super().__init__()
         self.encoder = Encoder(
-            lat_lons=lat_lons,
-            resolution=resolution,
+            lat_lons,
+            graph_nodes,
+            lat_lons_to_graph_map, 
+            distances, 
+            # resolution=resolution,
             input_dim=feature_dim+aux_dim,
             output_dim=node_dim,
             output_edge_dim=edge_dim,
@@ -70,8 +76,10 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
             mlp_norm_type=norm_type,
         )
         self.decoder = Decoder(
-            lat_lons=lat_lons,
-            resolution=resolution,
+            lat_lons,
+            graph_nodes,
+            lat_lons_to_graph_map, 
+            # resolution=resolution,
             input_dim=node_dim,
             output_dim=feature_dim,
             output_edge_dim=edge_dim,

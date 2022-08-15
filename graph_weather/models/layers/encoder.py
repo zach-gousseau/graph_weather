@@ -29,7 +29,66 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 
-from graph_weather.models.layers.graph_net_block import MLP, GraphProcessor
+from .graph_net_block import MLP, GraphProcessor
+from .utils import haversine
+
+
+
+
+def create_encoder_graph(lat_lons: list, graph_nodes: list, lat_lons_to_graph_map: dict, input_dim: int):
+
+    # Indices for each lat/lon node and graph node
+    lat_lon_index = list(range(0, len(lat_lons)))
+    graph_node_index = list(range(len(lat_lon_index), len(lat_lon_index) + len(graph_nodes)))
+    lat_lon_map = {idx: lat_lon for idx, lat_lon in zip(lat_lon_index, lat_lons)}
+    graph_node_map = {idx: node for idx, node in zip(graph_node_index, graph_nodes)}
+
+    # Create bipartite edges (from lat/lon to graph)
+    edge_sources = []
+    edge_targets = []
+    for from_i, to_j in lat_lons_to_graph_map.items():
+        edge_sources.append(lat_lon_index[from_i])
+        edge_targets.append(graph_node_index[to_j])
+
+    edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
+
+    
+    # Create tensor for each lat/lon and graph node
+    nodes = torch.zeros((len(lat_lons) + len(graph_nodes), input_dim), dtype=torch.float)
+
+    # Get distances between each lat/lon node and its corresponding graph node\
+    distances = []
+    for from_idx, to_idx in zip(edge_sources, edge_targets):
+        from_lat_lon = lat_lon_map[from_idx]
+        to_graph_node = graph_node_map[to_idx]
+        # distance = haversine(from_lat_lon[0], from_lat_lon[1], to_graph_node[0], to_graph_node[1])
+        distance = h3.point_dist(from_lat_lon, to_graph_node, unit="rads")
+        distances.append([np.sin(distance), np.cos(distance)])
+        
+    distances = torch.tensor(distances, dtype=torch.float)
+
+    return Data(x=nodes, edge_index=edge_index, edge_attr=distances)
+
+def create_latent_graph(graph_nodes: list, distances: dict):
+    """
+    Copies over and generates a Data object for the processor to use
+
+    Returns:
+        The connectivity and edge attributes for the latent graph
+    """
+    edge_sources = []
+    edge_targets = []
+    edge_attrs = []
+    for graph_node_idx in range(len(graph_nodes)):
+        for neighbor in distances[graph_node_idx]:
+            edge_sources.append(graph_node_idx)
+            edge_targets.append(neighbor)
+            edge_attrs.append(distances[graph_node_idx][neighbor])
+
+    edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
+    edge_attrs = torch.tensor(edge_attrs, dtype=torch.float)
+    return Data(edge_index=edge_index, edge_attr=edge_attrs)
+
 
 
 class Encoder(torch.nn.Module):
@@ -38,7 +97,10 @@ class Encoder(torch.nn.Module):
     def __init__(
         self,
         lat_lons: list,
-        resolution: int = 2,
+        graph_nodes: list,
+        lat_lons_to_graph_map: dict, 
+        distances: dict, 
+        # resolution: int = 2,
         input_dim: int = 78,
         output_dim: int = 256,
         output_edge_dim: int = 256,
@@ -67,46 +129,11 @@ class Encoder(torch.nn.Module):
         super().__init__()
         self.output_dim = output_dim
         self.num_latlons = len(lat_lons)
-        self.base_h3_grid = sorted(list(h3.uncompact(h3.get_res0_indexes(), resolution)))
-        self.base_h3_map = {h_i: i for i, h_i in enumerate(self.base_h3_grid)}
-        self.h3_grid = [h3.geo_to_h3(lat, lon, resolution) for lat, lon in lat_lons]
-        self.h3_mapping = {}
-        h_index = len(self.base_h3_grid)
-        for h in self.base_h3_grid:
-            if h not in self.h3_mapping:
-                h_index -= 1
-                self.h3_mapping[h] = h_index + self.num_latlons
-        # Now have the h3 grid mapping, the bipartite graph of edges connecting lat/lon to h3 nodes
-        # Should have vertical and horizontal difference
-        self.h3_distances = []
-        for idx, h3_point in enumerate(self.h3_grid):
-            lat_lon = lat_lons[idx]
-            distance = h3.point_dist(lat_lon, h3.h3_to_geo(h3_point), unit="rads")
-            self.h3_distances.append([np.sin(distance), np.cos(distance)])
-        self.h3_distances = torch.tensor(self.h3_distances, dtype=torch.float)
-        # Compress to between 0 and 1
 
-        # Build the default graph
-        # lat_nodes = torch.zeros((len(lat_lons_heights), input_dim), dtype=torch.float)
-        # h3_nodes = torch.zeros((h3.num_hexagons(resolution), output_dim), dtype=torch.float)
-        nodes = torch.zeros(
-            (len(lat_lons) + h3.num_hexagons(resolution), input_dim), dtype=torch.float
-        )
-        # Get connections between lat nodes and h3 nodes
-        edge_sources = []
-        edge_targets = []
-        for node_index, lat_node in enumerate(self.h3_grid):
-            edge_sources.append(node_index)
-            edge_targets.append(self.h3_mapping[lat_node])
-        edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
+        self.graph = create_encoder_graph(lat_lons, graph_nodes, lat_lons_to_graph_map, input_dim)
+        self.latent_graph = create_latent_graph(graph_nodes, distances)
+        self.h3_nodes = torch.zeros((len(graph_nodes), input_dim), dtype=torch.float)  # Tensor w/ shape: (num_graph_nodes, num_features)
 
-        # Use homogenous graph to make it easier
-        self.graph = Data(x=nodes, edge_index=edge_index, edge_attr=self.h3_distances)
-
-        self.latent_graph = self.create_latent_graph()
-
-        # Extra starting ones for appending to inputs, could 'learn' good starting points
-        self.h3_nodes = torch.zeros((h3.num_hexagons(resolution), input_dim), dtype=torch.float)
         # Output graph
 
         self.node_encoder = MLP(
@@ -155,6 +182,7 @@ class Encoder(torch.nn.Module):
         self.h3_nodes = self.h3_nodes.to(features.device)
         self.graph = self.graph.to(features.device)
         self.latent_graph = self.latent_graph.to(features.device)
+
         features = torch.cat(
             [features, einops.repeat(self.h3_nodes, "n f -> b n f", b=batch_size)], dim=1
         )
@@ -177,6 +205,8 @@ class Encoder(torch.nn.Module):
         out = einops.rearrange(out, "(b n) f -> b n f", b=batch_size)
         _, out = torch.split(out, [self.num_latlons, self.h3_nodes.shape[0]], dim=1)
         out = einops.rearrange(out, "b n f -> (b n) f")
+        i = 1
+
         return (
             out,
             torch.cat(

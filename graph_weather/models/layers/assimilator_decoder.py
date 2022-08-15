@@ -19,16 +19,58 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 
-from graph_weather.models.layers.graph_net_block import MLP, GraphProcessor
+from .graph_net_block import MLP, GraphProcessor
+from .utils import haversine
+
+def create_decoder_graph(lat_lons: list, graph_nodes: list, lat_lons_to_graph_map: dict, input_dim: int):
+
+    # graph_to_lat_lons_map = {v: k for k, v in lat_lons_to_graph_map.items()}
+    graph_to_lat_lons_map_from = list(lat_lons_to_graph_map.values())
+    graph_to_lat_lons_map_to = list(lat_lons_to_graph_map.keys())
+
+    # Indices for each lat/lon node and graph node
+    # lat_lon_index = list(range(0, len(lat_lons)))
+    # graph_node_index = list(range(len(lat_lon_index), len(lat_lon_index) + len(graph_nodes)))
+    graph_node_index = list(range(0, len(graph_nodes)))
+    lat_lon_index = list(range(len(graph_node_index), len(graph_node_index) + len(lat_lons)))
+    lat_lon_map = {idx: lat_lon for idx, lat_lon in zip(lat_lon_index, lat_lons)}
+    graph_node_map = {idx: node for idx, node in zip(graph_node_index, graph_nodes)}
+
+    # Create bipartite edges (from lat/lon to graph)
+    edge_sources = []
+    edge_targets = []
+    for from_i, to_j in zip(graph_to_lat_lons_map_from, graph_to_lat_lons_map_to):
+        edge_sources.append(graph_node_index[from_i])
+        edge_targets.append(lat_lon_index[to_j])
+
+    edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
+    
+    # Create tensor for each lat/lon and graph node
+    nodes = torch.zeros((len(lat_lons) + len(graph_nodes), input_dim), dtype=torch.float)
+
+    # Get distances between each lat/lon node and its corresponding graph node\
+    distances = []
+    for from_idx, to_idx in zip(edge_sources, edge_targets):
+        from_graph_node = graph_node_map[from_idx]
+        to_lat_lon = lat_lon_map[to_idx]
+        # distance = haversine(from_graph_node[0], from_graph_node[1], to_lat_lon[0], to_lat_lon[1])
+        distance = h3.point_dist(from_graph_node, to_lat_lon, unit="rads")
+        distances.append([np.sin(distance), np.cos(distance)])
+        
+    distances = torch.tensor(distances, dtype=torch.float)
+
+    return Data(x=nodes, edge_index=edge_index, edge_attr=distances)
 
 
+resolution=2
 class AssimilatorDecoder(torch.nn.Module):
     """Assimilator graph module"""
 
     def __init__(
         self,
-        lat_lons,
-        resolution: int = 2,
+        lat_lons: list,
+        graph_nodes: list,
+        lat_lons_to_graph_map: dict, 
         input_dim: int = 256,
         output_dim: int = 78,
         output_edge_dim: int = 256,
@@ -60,45 +102,10 @@ class AssimilatorDecoder(torch.nn.Module):
         """
         super().__init__()
         self.num_latlons = len(lat_lons)
-        self.base_h3_grid = sorted(list(h3.uncompact(h3.get_res0_indexes(), resolution)))
-        self.num_h3 = len(self.base_h3_grid)
-        self.h3_grid = [h3.geo_to_h3(lat, lon, resolution) for lat, lon in lat_lons]
-        self.h3_to_index = {}
-        h_index = len(self.base_h3_grid)
-        for h in self.base_h3_grid:
-            if h not in self.h3_to_index:
-                h_index -= 1
-                self.h3_to_index[h] = h_index
-        self.h3_mapping = {}
-        for h, value in enumerate(self.h3_grid):
-            self.h3_mapping[h + self.num_h3] = value
-
-        # Build the default graph
-        nodes = torch.zeros(
-            (len(lat_lons) + h3.num_hexagons(resolution), input_dim), dtype=torch.float
-        )
-        # Extra starting ones for appending to inputs, could 'learn' good starting points
+        self.num_graph_nodes = len(graph_nodes)
+        
         self.latlon_nodes = torch.zeros((len(lat_lons), input_dim), dtype=torch.float)
-        # Get connections between lat nodes and h3 nodes TODO Paper makes it seem like the 3
-        #  closest iso points map to the lat/lon point Do kring 1 around current h3 cell,
-        #  and calculate distance between all those points and the lat/lon one, choosing the
-        #  nearest N (3) For a bit simpler, just include them all with their distances
-        edge_sources = []
-        edge_targets = []
-        self.h3_to_lat_distances = []
-        for node_index, h_node in enumerate(self.h3_grid):
-            # Get h3 index
-            h_points = h3.k_ring(self.h3_mapping[node_index + self.num_h3], 1)
-            for h in h_points:
-                distance = h3.point_dist(lat_lons[node_index], h3.h3_to_geo(h), unit="rads")
-                self.h3_to_lat_distances.append([np.sin(distance), np.cos(distance)])
-                edge_sources.append(self.h3_to_index[h])
-                edge_targets.append(node_index + self.num_h3)
-        edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
-        self.h3_to_lat_distances = torch.tensor(self.h3_to_lat_distances, dtype=torch.float)
-
-        # Use normal graph as its a bit simpler
-        self.graph = Data(x=nodes, edge_index=edge_index, edge_attr=self.h3_to_lat_distances)
+        self.graph = create_decoder_graph(lat_lons, graph_nodes, lat_lons_to_graph_map, input_dim)
 
         self.edge_encoder = MLP(2, output_edge_dim, hidden_dim_processor_edge, 2, mlp_norm_type)
         self.graph_processor = GraphProcessor(
@@ -149,5 +156,5 @@ class AssimilatorDecoder(torch.nn.Module):
         # Remove the h3 nodes now, only want the latlon ones
         out = self.node_decoder(out)  # Decode to 78 from 256
         out = einops.rearrange(out, "(b n) f -> b n f", b=batch_size)
-        test, out = torch.split(out, [self.num_h3, self.num_latlons], dim=1)
+        test, out = torch.split(out, [self.num_graph_nodes, self.num_latlons], dim=1)
         return out

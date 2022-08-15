@@ -15,7 +15,7 @@ more complex dynamics)
 """
 import torch
 
-from graph_weather.models.layers.assimilator_decoder import AssimilatorDecoder
+from .assimilator_decoder import AssimilatorDecoder
 
 
 class Decoder(AssimilatorDecoder):
@@ -23,8 +23,9 @@ class Decoder(AssimilatorDecoder):
 
     def __init__(
         self,
-        lat_lons,
-        resolution: int = 2,
+        lat_lons: list,
+        graph_nodes: list,
+        lat_lons_to_graph_map: dict, 
         input_dim: int = 256,
         output_dim: int = 78,
         output_edge_dim: int = 256,
@@ -56,7 +57,8 @@ class Decoder(AssimilatorDecoder):
         """
         super().__init__(
             lat_lons,
-            resolution,
+            graph_nodes,
+            lat_lons_to_graph_map, 
             input_dim,
             output_dim,
             output_edge_dim,

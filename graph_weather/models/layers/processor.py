@@ -9,7 +9,7 @@ and its immediate neighbors. There are residual connections between each round o
 """
 import torch
 
-from graph_weather.models.layers.graph_net_block import GraphProcessor
+from .graph_net_block import GraphProcessor
 
 
 class Processor(torch.nn.Module):
