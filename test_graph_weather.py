@@ -28,15 +28,15 @@ for idx in range(len(graph_nodes)):
             distances[idx][neighbor] = (0, distance)
         except:
             pass
-    
-
 
 model = GraphWeatherForecaster(
     lat_lons,
     graph_nodes,
     lat_lons_to_graph_map, 
     distances, 
-    aux_dim=0)
+    aux_dim=0,
+    output_dim=1,
+    )
 
 features = torch.randn((1, len(lat_lons), 78))
 

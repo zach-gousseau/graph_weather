@@ -62,7 +62,6 @@ def create_decoder_graph(lat_lons: list, graph_nodes: list, lat_lons_to_graph_ma
     return Data(x=nodes, edge_index=edge_index, edge_attr=distances)
 
 
-resolution=2
 class AssimilatorDecoder(torch.nn.Module):
     """Assimilator graph module"""
 
