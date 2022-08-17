@@ -37,6 +37,7 @@ model = GraphWeatherForecaster(
     aux_dim=0,
     output_dim=1,
     target_variables=[7],
+    pedict_delta=True,
     )
 
 features = torch.randn((1, len(lat_lons), 78))

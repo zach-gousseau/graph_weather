@@ -17,6 +17,7 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         feature_dim: int = 78,
         output_dim: int = 78,
         target_variables: list = None,
+        pedict_delta: bool = False,
         aux_dim: int = 24,
         node_dim: int = 256,
         edge_dim: int = 256,
@@ -62,6 +63,9 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
             self.target_variables = torch.tensor(list(range(output_dim))).type(torch.LongTensor)
         else:
             self.target_variables = torch.tensor(target_variables).type(torch.LongTensor)
+
+
+        self.predict_delta = pedict_delta
 
         self.encoder = Encoder(
             lat_lons,
@@ -115,5 +119,11 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         """
         x, edge_idx, edge_attr = self.encoder(features)
         x = self.processor(x, edge_idx, edge_attr)
-        x = self.decoder(x, features[..., self.target_variables], features.shape[0])
+
+        if self.predict_delta:
+            start_features = torch.zeros_like(features[..., self.target_variables])
+        else:
+            start_features = features[..., self.target_variables]
+
+        x = self.decoder(x, start_features, features.shape[0])
         return x
