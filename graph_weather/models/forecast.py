@@ -115,6 +115,5 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         """
         x, edge_idx, edge_attr = self.encoder(features)
         x = self.processor(x, edge_idx, edge_attr)
-        print(features.shape)
         x = self.decoder(x, features[..., self.target_variables], features.shape[0])
         return x
