@@ -16,6 +16,7 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         distances: dict, 
         feature_dim: int = 78,
         output_dim: int = 78,
+        target_variables: list = None,
         aux_dim: int = 24,
         node_dim: int = 256,
         edge_dim: int = 256,
@@ -50,12 +51,23 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
                 one of 'LayerNorm', 'GraphNorm', 'InstanceNorm', 'BatchNorm', 'MessageNorm', or None
         """
         super().__init__()
+
+        if target_variables is None and output_dim != feature_dim:
+            raise ValueError('If only predicting a subset of the input variables, you must specify the indices of the predicted\
+                variable using target_variables.')
+        elif target_variables is not None and output_dim != len(target_variables):
+            raise ValueError(f'Size of target_variables {len(target_variables)} should match output_dim {output_dim}.')
+        elif target_variables is None and output_dim == feature_dim:
+            # Default
+            self.target_variables = torch.tensor(list(range(output_dim))).type(torch.LongTensor)
+        else:
+            self.target_variables = torch.tensor(target_variables).type(torch.LongTensor)
+
         self.encoder = Encoder(
             lat_lons,
             graph_nodes,
             lat_lons_to_graph_map, 
             distances, 
-            # resolution=resolution,
             input_dim=feature_dim+aux_dim,
             output_dim=node_dim,
             output_edge_dim=edge_dim,
@@ -79,7 +91,6 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
             lat_lons,
             graph_nodes,
             lat_lons_to_graph_map, 
-            # resolution=resolution,
             input_dim=node_dim,
             output_dim=output_dim,
             output_edge_dim=edge_dim,
@@ -104,5 +115,6 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         """
         x, edge_idx, edge_attr = self.encoder(features)
         x = self.processor(x, edge_idx, edge_attr)
-        x = self.decoder(x, features.shape[0])
+        print(features.shape)
+        x = self.decoder(x, features[..., self.target_variables], features.shape[0])
         return x

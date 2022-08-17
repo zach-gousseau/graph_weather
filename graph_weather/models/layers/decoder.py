@@ -72,7 +72,7 @@ class Decoder(AssimilatorDecoder):
         )
 
     def forward(
-        self, processor_features: torch.Tensor, start_features: torch.Tensor
+        self, processor_features: torch.Tensor, start_features: torch.Tensor, batch_size: int,
     ) -> torch.Tensor:
         """
         Adds features to the encoding graph
@@ -84,6 +84,6 @@ class Decoder(AssimilatorDecoder):
         Returns:
             Updated features for model
         """
-        out = super().forward(processor_features, start_features)
+        out = super().forward(processor_features, batch_size)
         out = out + start_features  # residual connection
         return out
