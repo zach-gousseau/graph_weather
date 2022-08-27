@@ -13,6 +13,7 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         lat_lons: list,
         graph_nodes: list,
         lat_lons_to_graph_map: dict, 
+        graph_to_lat_lons_map: dict, 
         distances: dict, 
         feature_dim: int = 78,
         output_dim: int = 78,
@@ -94,7 +95,7 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         self.decoder = Decoder(
             lat_lons,
             graph_nodes,
-            lat_lons_to_graph_map, 
+            graph_to_lat_lons_map, 
             input_dim=node_dim,
             output_dim=output_dim,
             output_edge_dim=edge_dim,
@@ -117,13 +118,10 @@ class GraphWeatherForecaster(torch.nn.Module, PyTorchModelHubMixin):
         Returns:
             The next state in the forecast
         """
+        start_features = features[..., self.target_variables]
+        start_features = torch.zeros_like(features[..., self.target_variables]) if not self.predict_delta else start_features
+
         x, edge_idx, edge_attr = self.encoder(features)
         x = self.processor(x, edge_idx, edge_attr)
-
-        if self.predict_delta:
-            start_features = torch.zeros_like(features[..., self.target_variables])
-        else:
-            start_features = features[..., self.target_variables]
-
         x = self.decoder(x, start_features, features.shape[0])
         return x

@@ -22,11 +22,11 @@ from torch_geometric.data import Data
 from .graph_net_block import MLP, GraphProcessor
 from .utils import haversine
 
-def create_decoder_graph(lat_lons: list, graph_nodes: list, lat_lons_to_graph_map: dict, input_dim: int):
+def create_decoder_graph(lat_lons: list, graph_nodes: list, graph_to_lat_lons_map: dict, input_dim: int):
 
     # graph_to_lat_lons_map = {v: k for k, v in lat_lons_to_graph_map.items()}
-    graph_to_lat_lons_map_from = list(lat_lons_to_graph_map.values())
-    graph_to_lat_lons_map_to = list(lat_lons_to_graph_map.keys())
+    # graph_to_lat_lons_map_from = list(graph_to_lat_lons_map.values())
+    # graph_to_lat_lons_map_to = list(graph_to_lat_lons_map.keys())
 
     # Indices for each lat/lon node and graph node
     # lat_lon_index = list(range(0, len(lat_lons)))
@@ -39,9 +39,13 @@ def create_decoder_graph(lat_lons: list, graph_nodes: list, lat_lons_to_graph_ma
     # Create bipartite edges (from lat/lon to graph)
     edge_sources = []
     edge_targets = []
-    for from_i, to_j in zip(graph_to_lat_lons_map_from, graph_to_lat_lons_map_to):
-        edge_sources.append(graph_node_index[from_i])
-        edge_targets.append(lat_lon_index[to_j])
+    # for from_i, to_j in zip(graph_to_lat_lons_map_from, graph_to_lat_lons_map_to):
+    #     edge_sources.append(graph_node_index[from_i])
+    #     edge_targets.append(lat_lon_index[to_j])
+    for from_i, to_js in graph_to_lat_lons_map.items():
+        for to_j in to_js:
+            edge_sources.append(graph_node_index[from_i])
+            edge_targets.append(lat_lon_index[to_j])
 
     edge_index = torch.tensor([edge_sources, edge_targets], dtype=torch.long)
     
@@ -69,7 +73,7 @@ class AssimilatorDecoder(torch.nn.Module):
         self,
         lat_lons: list,
         graph_nodes: list,
-        lat_lons_to_graph_map: dict, 
+        graph_to_lat_lons_map: dict, 
         input_dim: int = 256,
         output_dim: int = 78,
         output_edge_dim: int = 256,
@@ -104,7 +108,7 @@ class AssimilatorDecoder(torch.nn.Module):
         self.num_graph_nodes = len(graph_nodes)
         
         self.latlon_nodes = torch.zeros((len(lat_lons), input_dim), dtype=torch.float)
-        self.graph = create_decoder_graph(lat_lons, graph_nodes, lat_lons_to_graph_map, input_dim)
+        self.graph = create_decoder_graph(lat_lons, graph_nodes, graph_to_lat_lons_map, input_dim)
 
         self.edge_encoder = MLP(2, output_edge_dim, hidden_dim_processor_edge, 2, mlp_norm_type)
         self.graph_processor = GraphProcessor(
@@ -121,7 +125,7 @@ class AssimilatorDecoder(torch.nn.Module):
             input_dim, output_dim, hidden_dim_decoder, hidden_layers_decoder, None
         )
 
-    def forward(self, processor_features: torch.Tensor, batch_size: int) -> torch.Tensor:
+    def forward(self, processor_features: torch.Tensor, start_features: torch.Tensor, batch_size: int) -> torch.Tensor:
         """
         Adds features to the encoding graph
 
@@ -156,4 +160,6 @@ class AssimilatorDecoder(torch.nn.Module):
         out = self.node_decoder(out)  # Decode to 78 from 256
         out = einops.rearrange(out, "(b n) f -> b n f", b=batch_size)
         test, out = torch.split(out, [self.num_graph_nodes, self.num_latlons], dim=1)
+        # print(start_features.shape)
+        # print(1)
         return out

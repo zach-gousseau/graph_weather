@@ -3,6 +3,8 @@ import numpy as np
 from graph_weather.models.forecast import GraphWeatherForecaster
 from graph_weather.models.losses import NormalizedMSELoss
 
+BATCH_SIZE = 1
+
 lat_lons = []
 for lat in range(-90, 90, 1):
     for lon in range(0, 360, 1):
@@ -29,6 +31,12 @@ for idx in range(len(graph_nodes)):
         except:
             pass
 
+
+print('num lat/lon nodes:', len(lat_lons))
+print('num graph nodes:', len(graph_nodes))
+print('total:', len(lat_lons) + len(graph_nodes))
+print('nun edges:', len(lat_lons_to_graph_map))
+
 model = GraphWeatherForecaster(
     lat_lons,
     graph_nodes,
@@ -37,10 +45,10 @@ model = GraphWeatherForecaster(
     aux_dim=0,
     output_dim=1,
     target_variables=[7],
-    pedict_delta=True,
+    predict_delta=True,
     )
 
-features = torch.randn((1, len(lat_lons), 78))
+features = torch.randn((BATCH_SIZE, len(lat_lons), 78))
 
 out = model(features)
 criterion = NormalizedMSELoss(lat_lons=lat_lons, feature_variance=torch.randn((78,)))
